@@ -1,0 +1,48 @@
+{
+  "name": "budgetwise-to-actual",
+  "version": "0.1.0",
+  "description": "Unofficial Budgetwise → Actual Budget migration tool. Personal use only. AI-assisted. No warranty. See NOTICE.",
+  "license": "Unlicense",
+  "author": "ammunoz <ammunoz@users.noreply.github.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ammunoz/budgetwise-to-actual.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ammunoz/budgetwise-to-actual/issues"
+  },
+  "homepage": "https://github.com/ammunoz/budgetwise-to-actual#readme",
+  "keywords": [
+    "budgetwise",
+    "actual-budget",
+    "actual",
+    "budget",
+    "migration"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "files": [
+    "bin",
+    "lib",
+    "README.md",
+    "LICENSE",
+    "NOTICE",
+    "SECURITY.md",
+    "CHANGELOG.md"
+  ],
+  "private": false,
+  "type": "module",
+  "scripts": {
+    "smoke": "node bin/smoke.js",
+    "export": "node bin/export_budgetwise.js",
+    "import": "node bin/import_budgetwise.js",
+    "test": "node --test 'test/**/*.test.js'",
+    "lint": "eslint bin/ lib/ test/",
+    "format": "prettier --write bin/ lib/ test/"
+  },
+  "dependencies": {
+    "@actual-app/api": "^25.1.0",
+    "dotenv": "^16.4.5"
+  }
+}

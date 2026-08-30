@@ -1,0 +1,18 @@
+{
+  "data": [
+    {
+      "acct_notes": null,
+      "apr": null,
+      "budget_id": "00000000-0000-0000-0000-000000000000",
+      "budget_notes": null,
+      "current_bal": "0",
+      "id": "00000000-0000-0000-0000-000000000001",
+      "min_payment": null,
+      "mx_account_id": null,
+      "name": "Checking",
+      "off_budget": false,
+      "type": "checking",
+      "uncategorized_transactions_total": 0
+    }
+  ]
+}

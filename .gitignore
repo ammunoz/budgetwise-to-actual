@@ -1,0 +1,34 @@
+# Environment / secrets
+.env
+.actual-data/
+
+# Local data
+captured/
+# Allow the test fixture under test/fixtures/captured/ (sample data only)
+!test/fixtures/captured/
+
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Node
+node_modules/
+coverage/
+dist/
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# Local audit patterns (PII / account-specific data)
+.audit-patterns
+.audit-patterns.tmp
+
+# Local-only documentation (not part of the public repo)
+LOCAL.md
+
+# Development utilities (Playwright, validation scripts — not part of public tool)
+scripts/

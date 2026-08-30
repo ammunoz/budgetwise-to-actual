@@ -1,0 +1,46 @@
+# NOTICE
+
+This software is provided "AS IS" without warranty of any kind. The
+author is not liable for any damages, financial loss, or data loss
+arising from its use. No support is provided — open a GitHub issue if
+you want, but no response is guaranteed.
+
+This is not a financial tool. Always verify imported data against
+your source before trusting it.
+
+## Not affiliated
+
+This project is not affiliated with, endorsed by, or sponsored by
+Budgetwise Inc., Actual Budget, or anyone associated with either.
+Trademarks belong to their respective owners.
+
+## Terms of service
+
+Use of this tool may violate Budgetwise's or Actual Budget's Terms
+of Service. The authors have not reviewed either ToS and make no
+representation about their enforceability. Use at your own risk.
+
+## Interoperability (Canada)
+
+This tool was developed in Canada. The reverse-engineering of
+Budgetwise's HTTP API was performed under Section 30.71 of the
+Canadian Copyright Act, which permits reproducing computer programs
+to achieve interoperability.
+
+## AI assistance
+
+Portions of this codebase were drafted with AI assistance; all code
+was reviewed and is maintained by the author. The author chose The
+Unlicense over copyright-bearing licenses (MIT, BSD, Apache)
+because asserting copyright over AI-drafted code is inappropriate.
+
+## Version-specific
+
+Verified 2026-08 against the **my.budgetwise.io** deployment (user-
+facing web app). NOT tested against alpha.budgetwise.io, self-hosted
+deployments, mobile clients, older or newer versions, or forks.
+
+## Privacy
+
+Captures contain sensitive financial data. Don't commit captures to
+git. The authors are not responsible for data committed to forks.

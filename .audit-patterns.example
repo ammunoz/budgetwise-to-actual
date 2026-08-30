@@ -1,0 +1,30 @@
+# .audit-patterns.example
+#
+# Format: one extended-regex per line. Lines starting with # are comments.
+# The CI workflow greps the whole tree (except node_modules / .git /
+# test/fixtures) with these patterns. Any match fails the build.
+#
+# Two ways to use this:
+#
+# 1. LOCAL audit — copy this file to .audit-patterns (gitignored),
+#    fill in your patterns, and run:
+#
+#        grep -rEf .audit-patterns . \
+#          --exclude-dir=node_modules \
+#          --exclude-dir=.git \
+#          --exclude-dir=test/fixtures
+#
+#    The CI workflow does the same thing.
+#
+# 2. CI audit — configure the same patterns as a GitHub repository
+#    secret named AUDIT_PATTERNS (Settings → Secrets and variables →
+#    Actions → New repository secret). One extended-regex per line.
+#    Secret is exposed to main-branch and internal-PR runs; for
+#    security, GitHub does not expose secrets to fork PRs.
+#
+# Suggested categories — replace placeholders with your own:
+
+PLACEHOLDER_USERNAME_1
+PLACEHOLDER_USERNAME_2
+PLACEHOLDER_OLD_EMAIL@example\.com
+PLACEHOLDER_UUID_PREFIX-[0-9a-f-]+

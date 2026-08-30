@@ -1,0 +1,18 @@
+{
+  "data": [
+    {
+      "budget_id": "00000000-0000-0000-0000-000000000000",
+      "date_format": "MM/DD/YY",
+      "decimal": ".",
+      "first_day": 0,
+      "global_ltb": true,
+      "hide_due_date": false,
+      "id": "00000000-0000-0000-0000-000000000006",
+      "month_view": "multi",
+      "num_of_months": 1,
+      "show_symbol": true,
+      "symbol": "$",
+      "thousands": ","
+    }
+  ]
+}

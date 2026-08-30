@@ -1,0 +1,14 @@
+{
+  "budgetId": "00000000-0000-0000-0000-000000000000",
+  "capturedAt": "2026-08-29T07:42:36.885Z",
+  "endpointCounts": {
+    "accounts": 1,
+    "categories": 2,
+    "sections": 1,
+    "payees": 1,
+    "settings": 1,
+    "timeframeCategories": null,
+    "ltbBreakdown": null,
+    "transactions": 2
+  }
+}

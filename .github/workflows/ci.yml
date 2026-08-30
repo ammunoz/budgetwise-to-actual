@@ -1,0 +1,69 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: test (${{ matrix.os }}, node ${{ matrix.node }})
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22]
+        os: [ubuntu-latest, windows-latest, macos-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - run: npm ci
+
+      - name: Verify --help works without .env
+        # --help must not require config validation; catches regressions where
+        # a new static import pulls in config.js before the help check runs.
+        run: |
+          node bin/import_budgetwise.js --help
+          node bin/export_budgetwise.js --help
+
+      - name: Run tests
+        run: npm test
+
+      - name: Verify node --check on all sources
+        # Catches syntax errors that test runner might tolerate.
+        # Use -print0 + read -d '' to handle paths with spaces (defensive).
+        run: |
+          find bin lib test -name '*.js' -print0 | while IFS= read -r -d '' f; do
+            node --check "$f"
+          done
+
+      - name: Audit for user-identifying strings
+        # Patterns come from the AUDIT_PATTERNS repository secret
+        # (Settings → Secrets and variables → Actions). One
+        # extended-regex per line. If the secret is unset, this step
+        # warns and skips. Secrets are not exposed to fork PRs by
+        # GitHub design, so fork PRs skip the audit; this is the
+        # intended security boundary.
+        run: |
+          if [ -z "$AUDIT_PATTERNS" ]; then
+            echo "::warning::AUDIT_PATTERNS secret not set — audit skipped. See .audit-patterns.example."
+            exit 0
+          fi
+          printf '%s\n' "$AUDIT_PATTERNS" > .audit-patterns.tmp
+          # --exclude the temp file itself so grep doesn't match the patterns we just wrote.
+          if grep -rEf .audit-patterns.tmp . --exclude=.audit-patterns.tmp --exclude-dir=node_modules --exclude-dir=.git --exclude-dir=test/fixtures; then
+            echo "::error::Found user-identifying strings in source tree"
+            exit 1
+          fi
+          rm -f .audit-patterns.tmp
+        env:
+          AUDIT_PATTERNS: ${{ secrets.AUDIT_PATTERNS }}
