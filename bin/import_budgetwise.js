@@ -3,7 +3,7 @@
 // Usage:
 //   node bin/import_budgetwise.js                         # uses env defaults
 //   node bin/import_budgetwise.js --capture ../captured/budgetwise-test
-//   node bin/import_budgetwise.js --name "Budgetwise-Migration-SampleBudget"
+//   node bin/import_budgetwise.js --name "Budgetwise-Migration-Budget"
 //   node bin/import_budgetwise.js --keep-failed           # skip auto-wipe
 //   node bin/import_budgetwise.js --no-verify             # skip post-flight checks
 //   node bin/import_budgetwise.js --fix                   # if drift detected, write expected values
@@ -50,7 +50,7 @@ function printUsage() {
 Populates Actual Budget from captured Budgetwise JSON.
 Each run creates a new file in Actual (runImport is always additive).
 To avoid duplicate-name files, --name gets a counter suffix if the
-exact name already exists: 'SampleBudget' → 'SampleBudget-2' → 'SampleBudget-3' …
+exact name already exists: 'Budget' → 'Budget-2' → 'Budget-3' …
 To re-run with the exact same name, delete the prior file in
 Actual → Settings → Files first.
 
@@ -70,11 +70,11 @@ Notes:
     case-insensitive + apostrophe-normalized variants merged. Substring /
     edit-distance candidates are logged as warnings but NOT auto-merged.
   - Budget row consolidation runs on the capture: duplicate (timeframe,
-    category_id) rows collapse to one row per key with `budgeted` set to
+    category_id) rows collapse to one row per key with \`budgeted\` set to
     the SUM of all contributing rows (matches Budgetwise's own per-month
     math in ltbBreakdown.budgetedForMonth). CC rows are id-deduped before
     summing (the BW API may emit the same CC row twice with different
-    `spent` values; the `budgeted` value is identical and counts once).
+    \`spent\` values; the \`budgeted\` value is identical and counts once).
   - The setBudgetAmount API silently no-ops inside runImport, so budget
     amounts are written in a separate post-import pass.
   - After the budget pass, the tool re-reads Actual's budget cells and
