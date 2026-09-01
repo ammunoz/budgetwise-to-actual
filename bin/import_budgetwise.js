@@ -28,7 +28,7 @@ const [
   { loadCapture },
   { preflight, failures: prefFailures },
   { populate },
-  { checkCollision, findByName },
+  { checkCollision, findByName, resolveUniqueBudgetName },
   { expectedBudgetEntries, validateBudgets, fixDrift, formatDriftCell },
 ] = await Promise.all([
   import('../lib/config.js'),
@@ -48,14 +48,17 @@ function printUsage() {
   console.log(`Usage: node bin/import_budgetwise.js [options]
 
 Populates Actual Budget from captured Budgetwise JSON.
-Creates a new file via runImport; does NOT touch any existing file of the
-same name (delete manually via Actual → Settings → Files if you want to
-re-run from scratch).
+Each run creates a new file in Actual (runImport is always additive).
+To avoid duplicate-name files, --name gets a counter suffix if the
+exact name already exists: 'SampleBudget' → 'SampleBudget-2' → 'SampleBudget-3' …
+To re-run with the exact same name, delete the prior file in
+Actual → Settings → Files first.
 
 Options:
   --capture <dir>      Capture directory (default: ../captured/recon-budget).
   --name <name>        Budget file name in Actual
-                       (default: 'Budgetwise-Migration-Budget').
+                       (default: 'Budgetwise-Migration-Budget'). If taken,
+                       a counter suffix is appended automatically.
   --no-verify          Skip post-flight verification queries.
   --fix                If budget drift is detected, write the expected values
                        non-interactively (use with care — trusts the capture).
@@ -63,8 +66,6 @@ Options:
   --help, -h           Show this help.
 
 Notes:
-  - Each run creates a NEW file in Actual. To re-run cleanly, delete the
-    prior file via the Actual UI first.
   - Payee dedup runs on the capture: exact-name duplicates collapsed, then
     case-insensitive + apostrophe-normalized variants merged. Substring /
     edit-distance candidates are logged as warnings but NOT auto-merged.
@@ -93,10 +94,12 @@ function parseArgs(argv) {
   return out;
 }
 
-const BUDGET_NAME = args.name || 'Budgetwise-Migration-Budget';
+const REQUESTED_NAME = args.name || 'Budgetwise-Migration-Budget';
 const CAPTURE_DIR = args.capture
   ? resolve(args.capture)
   : resolve('../captured/recon-budget');
+
+let BUDGET_NAME = REQUESTED_NAME;
 
 async function main() {
   ensureDataDir();
@@ -123,6 +126,13 @@ async function main() {
   });
   logger.info(`  server: ${config.actual.serverURL}`);
 
+  // Resolve to a unique name so re-running with the same --name doesn't
+  // silently leave a duplicate on the server. @actual-app/api has no
+  // in-place replace; runImport always adds a new file.
+  BUDGET_NAME = await resolveUniqueBudgetName(REQUESTED_NAME);
+  if (BUDGET_NAME !== REQUESTED_NAME) {
+    logger.info(`  name "${REQUESTED_NAME}" already exists; using "${BUDGET_NAME}" instead`);
+  }
   await checkCollision(BUDGET_NAME);
 
   logger.section(`Creating + populating "${BUDGET_NAME}"`);

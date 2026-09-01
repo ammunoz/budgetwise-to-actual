@@ -52,11 +52,11 @@ npm install
 cp .env.example .env
 # Edit .env with your credentials
 node bin/smoke.js               # verify Actual connectivity
-node bin/export_budgetwise.js --budget SampleBudget --out ../captured/budgetwise-sample
-node bin/import_budgetwise.js --capture ../captured/budgetwise-sample --name "SampleBudget-Migration"
+node bin/export_budgetwise.js --budget Budget --out ../captured/budgetwise-export
+node bin/import_budgetwise.js --capture ../captured/budgetwise-export --name "Budgetwise-Migration"
 ```
 
-Open Actual at your server URL, switch to `SampleBudget-Migration`, verify the data, then delete the empty test files.
+Open Actual at your server URL, switch to `Budget-Migration`, verify the data, then delete the empty test files.
 
 ## Prerequisites
 
@@ -99,8 +99,14 @@ By default, captures are written **outside** the project directory (to `../captu
 ```
 --capture <dir>      Capture directory (default: ../captured/recon-budget).
 --name <name>        Budget file name in Actual
-                     (default: 'Budgetwise-Migration-Budget').
+                     (default: 'Budgetwise-Migration-Budget'). If a file
+                     with that name already exists, a counter suffix is
+                     appended automatically ('Budget' → 'Budget-2' → …).
+                     To re-run with the exact same name, delete the prior
+                     file in Actual → Settings → Files first.
 --no-verify          Skip post-flight verification queries.
+--fix                If budget drift is detected, write the expected values
+                     non-interactively (use with care — trusts the capture).
 --verbose            Debug-level logging.
 --help, -h           Show this help.
 ```
@@ -127,7 +133,7 @@ captured/*.json files       — local JSON snapshot
        │  api.createCategoryGroup / Category / Payee / Account
        │  api.addTransactions(..., { runTransfers: true, learnCategories: true })
        ▼
-[New file in Actual]         — `Budgetwise-Migration-SampleBudget`
+[New file in Actual]         — `Budgetwise-Migration-Budget`
 ```
 
 Budget amounts are written in a **separate post-import pass** because `setBudgetAmount` is silently dropped inside `runImport` (verified against `@actual-app/api` 25.x).
