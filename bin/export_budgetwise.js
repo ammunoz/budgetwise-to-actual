@@ -4,7 +4,7 @@
 //   node bin/export_budgetwise.js                 # uses BUDGETWISE_BUDGET_ID from .env
 //   node bin/export_budgetwise.js --budget Test   # resolves "Test" to a UUID
 //   node bin/export_budgetwise.js --budget <uuid>
-//   node bin/export_budgetwise.js --out ../captured/recon-budget-sample
+//   node bin/export_budgetwise.js --out ../captured/budgetwise-export
 //   node bin/export_budgetwise.js --verbose
 //   node bin/export_budgetwise.js --help
 
