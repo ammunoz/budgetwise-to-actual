@@ -2,7 +2,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { toCents, signAmount, toISODate, shiftISODateMonths, buildTransferSkipSet } from '../lib/normalize.js';
+import { toCents, signAmount, toISODate, shiftISODateMonths, effectiveDate, buildTransferSkipSet } from '../lib/normalize.js';
 
 test('toCents: positive string', () => {
   assert.equal(toCents('198.33'), 19833);
@@ -154,4 +154,56 @@ test('shiftISODateMonths: non-string passthrough', () => {
   assert.equal(shiftISODateMonths(null), null);
   assert.equal(shiftISODateMonths(123), 123);
   assert.equal(shiftISODateMonths('not-a-date'), 'not-a-date');
+});
+
+// =========================================================================
+// effectiveDate — wraps shiftISODateMonths for tx budget attribution.
+// Used by populate.js to honor ltb_next semantics.
+// =========================================================================
+test('effectiveDate: ISO datetime string with ltb_next=true shifts by 1 month', () => {
+  assert.equal(effectiveDate('2026-05-22T19:00:00', true), '2026-06-22');
+  assert.equal(effectiveDate('2026-05-22T19:00:00', false), '2026-05-22');
+});
+
+test('effectiveDate: YYYY-MM-DD string input', () => {
+  assert.equal(effectiveDate('2026-05-22', true), '2026-06-22');
+  assert.equal(effectiveDate('2026-05-22', false), '2026-05-22');
+});
+
+test('effectiveDate: applies day-clamping when shifting past month-end', () => {
+  // The actual bug case: 2024-05-31 with ltb_next shifts to 2024-06-30 (clamped)
+  assert.equal(effectiveDate('2024-05-31T19:00:00', true), '2024-06-30');
+  assert.equal(effectiveDate('2025-01-31T20:00:00', true), '2025-02-28');
+});
+
+test('effectiveDate: hoisting logic — same effective date means "keep in split"', () => {
+  // Symmetric split: both children have same effective date as parent → kept
+  const parentDate = '2026-05-22T19:00:00';
+  const parentEff = effectiveDate(parentDate, false);
+  const child1Eff = effectiveDate('2026-05-22T19:00:00', false);
+  const child2Eff = effectiveDate('2026-05-22T19:00:00', false);
+  assert.equal(parentEff, child1Eff);
+  assert.equal(parentEff, child2Eff);
+});
+
+test('effectiveDate: hoisting logic — different ltb_next shifts effective date', () => {
+  // Asymmetric split: child with ltb_next=true shifts forward 1 month
+  // This is the real-world bug case (2021-04-01 split parent with one child
+  // having ltb_next=true → child effective 2021-05-01, parent effective
+  // 2021-04-01 → must be hoisted).
+  const parentDate = '2021-04-01T19:00:00';
+  const parentEff = effectiveDate(parentDate, false);
+  const childEff = effectiveDate(parentDate, true);
+  assert.notEqual(parentEff, childEff);
+  assert.equal(parentEff, '2021-04-01');
+  assert.equal(childEff, '2021-05-01');
+});
+
+test('effectiveDate: hoisting logic — raw date mismatch (no ltb_next)', () => {
+  // Even without ltb_next, a child with a different raw date from the parent
+  // has a different effective date → must be hoisted. (makeChild clobbers
+  // child dates, so we can't preserve this in a split.)
+  const parentEff = effectiveDate('2021-04-15T19:00:00', false);
+  const childEff = effectiveDate('2021-04-10T19:00:00', false);
+  assert.notEqual(parentEff, childEff);
 });
