@@ -113,13 +113,41 @@ test('shiftISODateMonths: delta=0 is a no-op', () => {
   assert.equal(shiftISODateMonths('2026-05-22', 0), '2026-05-22');
 });
 
-test('shiftISODateMonths: handles day-of-month edge (Jan 31 → Feb 28/29)', () => {
-  // Documented behavior: we keep the original day even if it exceeds the
-  // target month's length. Actual's API may reject this; the importer
-  // should never produce such dates because Budgetwise transactions don't
-  // have day=31 in Jan source dates that need shifting. If this becomes a
-  // real concern, we'd clamp here.
-  assert.equal(shiftISODateMonths('2026-01-31', 1), '2026-02-31');
+test('shiftISODateMonths: clamps day to last valid day of target month', () => {
+  // Without clamping, "2024-05-31" + 1 = "2024-06-31" (invalid). Actual
+  // accepts the invalid string but the transaction is silently dropped from
+  // every month's `sum-amount`, propagating a missing-income gap through
+  // the cumulative carryover chain. See CHANGELOG 0.1.4.
+  assert.equal(shiftISODateMonths('2024-05-31', 1), '2024-06-30');
+  assert.equal(shiftISODateMonths('2023-03-31', 1), '2023-04-30');
+  assert.equal(shiftISODateMonths('2022-03-31', 1), '2022-04-30');
+  assert.equal(shiftISODateMonths('2025-01-31', 1), '2025-02-28');
+});
+
+test('shiftISODateMonths: day=30 in 30-day months stays 30', () => {
+  // Apr/Jun/Sep/Nov have 30 days; May 30 + 1 should land on June 30 (not 31).
+  assert.equal(shiftISODateMonths('2024-05-30', 1), '2024-06-30');
+  assert.equal(shiftISODateMonths('2024-08-30', 1), '2024-09-30');
+});
+
+test('shiftISODateMonths: leap-year Feb 29 clamps correctly', () => {
+  // Jan 31 in a leap year + 1 = Feb 29 (not 28).
+  assert.equal(shiftISODateMonths('2024-01-31', 1), '2024-02-29');
+  // Jan 31 in a non-leap year + 1 = Feb 28.
+  assert.equal(shiftISODateMonths('2023-01-31', 1), '2023-02-28');
+  // Feb 29 + 12 months in next year (non-leap) = Feb 28.
+  assert.equal(shiftISODateMonths('2024-02-29', 12), '2025-02-28');
+});
+
+test('shiftISODateMonths: Dec 31 + 1 = Jan 31 (valid rollover, not clamped)', () => {
+  // Guards against over-clamping — Jan always has 31 days.
+  assert.equal(shiftISODateMonths('2024-12-31', 1), '2025-01-31');
+  assert.equal(shiftISODateMonths('2026-12-31', 1), '2027-01-31');
+});
+
+test('shiftISODateMonths: day=29 clamps to 28 in non-leap Feb', () => {
+  assert.equal(shiftISODateMonths('2023-01-29', 1), '2023-02-28');
+  assert.equal(shiftISODateMonths('2023-01-30', 1), '2023-02-28');
 });
 
 test('shiftISODateMonths: non-string passthrough', () => {
