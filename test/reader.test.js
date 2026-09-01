@@ -9,6 +9,7 @@ import { loadCapture, unwrap } from '../lib/reader.js';
 import { writeFile, mkdir, rm } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { tmpdir } from 'node:os';
+// (unwrap is re-used below for tfc dedup tests)
 
 async function withCapture(name, captureData) {
   const dir = resolve(tmpdir(), `bw2a-test-${name}-${Date.now()}-${Math.random().toString(36).slice(2)}`);
@@ -110,4 +111,112 @@ test('dedup: respects first-seen order on usage tie', async () => {
   // Tie → first-seen wins (deterministic)
   assert.equal(out.length, 1);
   assert.equal(out[0].name, 'Twice');
+});
+
+// =========================================================================
+// Budget row dedup (dedupTimeframeCategories)
+// =========================================================================
+// Budgetwise's `/timeframe_categories` endpoint returns one row per save —
+// re-saving an unchanged budget creates a new row with the same category,
+// month, and a fresh id. The import must collapse duplicates so that the
+// trailing $0 echo rows don't overwrite the real budgeted value via
+// setBudgetAmount's last-write-wins behavior.
+
+async function withTfc(name, timeframeCategories) {
+  const dir = resolve(tmpdir(), `bw2a-test-tfc-${name}-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  await mkdir(dir, { recursive: true });
+  const required = {
+    accounts: { data: [] },
+    categories: { data: [] },
+    transactions: { data: [] },
+    timeframeCategories,
+  };
+  for (const [filename, data] of Object.entries(required)) {
+    await writeFile(resolve(dir, `${filename}.json`), JSON.stringify(data));
+  }
+  try {
+    const cap = await loadCapture(dir);
+    return unwrap(cap.timeframeCategories);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+test('tfc dedup: no duplicates — passthrough', async () => {
+  const out = await withTfc('passthrough', { data: [
+    { id: 1, timeframe: '012021', category_id: 'c1', budgeted: '10.00', spent: '0', is_cc: false },
+    { id: 2, timeframe: '012021', category_id: 'c2', budgeted: '20.00', spent: '0', is_cc: false },
+  ] });
+  assert.equal(out.length, 2);
+});
+
+test('tfc dedup: $X + $0 trailing — keeps $X', async () => {
+  // Real-world pattern: Budgetwise echoes the row with $0 when only `spent` changes.
+  const out = await withTfc('echo', { data: [
+    { id: 95194, timeframe: '042021', category_id: 'c1', budgeted: '10.00', spent: '-10.00', is_cc: false },
+    { id: 96048, timeframe: '042021', category_id: 'c1', budgeted: '0.00',  spent: '-10.00', is_cc: false },
+    { id: 96049, timeframe: '042021', category_id: 'c1', budgeted: '0.00',  spent: '-10.00', is_cc: false },
+  ] });
+  assert.equal(out.length, 1);
+  assert.equal(out[0].id, 95194);
+  assert.equal(out[0].budgeted, '10.00');
+});
+
+test('tfc dedup: $230 + $150 — keeps lowest-id row ($230)', async () => {
+  // The distinguishing case: two non-zero values. Budgetwise's UI shows the
+  // lower-id (older) row, so the import must do the same.
+  const out = await withTfc('edit', { data: [
+    { id: 101142, timeframe: '122021', category_id: 'dog', budgeted: '230.00', spent: '-115.75', is_cc: false },
+    { id: 101143, timeframe: '122021', category_id: 'dog', budgeted: '150.00', spent: '-115.75', is_cc: false },
+  ] });
+  assert.equal(out.length, 1);
+  assert.equal(out[0].id, 101142);
+  assert.equal(out[0].budgeted, '230.00');
+});
+
+test('tfc dedup: is_cc rows preserved with cc_account_id key', async () => {
+  // CC rows have category_id === null; key on cc_account_id to dedup them
+  // too (same echo pattern can hit CC entries).
+  const out = await withTfc('cc', { data: [
+    { id: 100, timeframe: '012021', cc_account_id: 'cc1', category_id: null, budgeted: '500.00', is_cc: true },
+    { id: 101, timeframe: '012021', cc_account_id: 'cc1', category_id: null, budgeted: '0.00',   is_cc: true },
+    { id: 200, timeframe: '012021', cc_account_id: 'cc2', category_id: null, budgeted: '300.00', is_cc: true },
+  ] });
+  assert.equal(out.length, 2);
+  const cc1 = out.find(e => e.cc_account_id === 'cc1');
+  assert.equal(cc1.id, 100);
+  assert.equal(cc1.budgeted, '500.00');
+});
+
+test('tfc dedup: descending-order array still picks lowest id', async () => {
+  // API order is normally ascending by id, but if a future API change
+  // returns rows in reverse, the rule must still pick the lowest id.
+  const out = await withTfc('descending', { data: [
+    { id: 101143, timeframe: '122021', category_id: 'dog', budgeted: '150.00', spent: '-115.75', is_cc: false },
+    { id: 101142, timeframe: '122021', category_id: 'dog', budgeted: '230.00', spent: '-115.75', is_cc: false },
+  ] });
+  assert.equal(out.length, 1);
+  assert.equal(out[0].id, 101142);
+  assert.equal(out[0].budgeted, '230.00');
+});
+
+test('tfc dedup: nested group envelope ({data: [[...],[...]]}) flattens before dedup', async () => {
+  // The actual Budgetwise response wraps entries in 2 groups (non-CC and CC).
+  // Both layers must be flattened so a cat entry and a cc entry with the
+  // same numeric id (across groups) don't collide on the id-based winner test.
+  const out = await withTfc('envelope', { data: [
+    [
+      { id: 1, timeframe: '012021', category_id: 'c1', budgeted: '10.00', is_cc: false },
+      { id: 2, timeframe: '012021', category_id: 'c1', budgeted: '0.00',  is_cc: false },
+    ],
+    [
+      { id: 1, timeframe: '012021', cc_account_id: 'cc1', category_id: null, budgeted: '500.00', is_cc: true },
+      { id: 2, timeframe: '012021', cc_account_id: 'cc1', category_id: null, budgeted: '0.00',   is_cc: true },
+    ],
+  ] });
+  assert.equal(out.length, 2);
+  const cat = out.find(e => e.category_id === 'c1');
+  const cc = out.find(e => e.cc_account_id === 'cc1');
+  assert.equal(cat.budgeted, '10.00');
+  assert.equal(cc.budgeted, '500.00');
 });

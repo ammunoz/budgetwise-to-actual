@@ -6,6 +6,7 @@
 //   node bin/import_budgetwise.js --name "Budgetwise-Migration-SampleBudget"
 //   node bin/import_budgetwise.js --keep-failed           # skip auto-wipe
 //   node bin/import_budgetwise.js --no-verify             # skip post-flight checks
+//   node bin/import_budgetwise.js --fix                   # if drift detected, write expected values
 //   node bin/import_budgetwise.js --help                  # show usage
 
 // Args parsing BEFORE any imports so `--help` works without .env.
@@ -28,6 +29,7 @@ const [
   { preflight, failures: prefFailures },
   { populate },
   { checkCollision, findByName },
+  { expectedBudgetEntries, validateBudgets, fixDrift, formatDriftCell },
 ] = await Promise.all([
   import('../lib/config.js'),
   import('../lib/logger.js'),
@@ -35,9 +37,11 @@ const [
   import('../lib/verify.js'),
   import('../lib/populate.js'),
   import('../lib/budget-mgmt.js'),
+  import('../lib/budgets.js'),
 ]);
 const { resolve } = await import('node:path');
 const fs = await import('node:fs');
+const readline = await import('node:readline');
 const api = await import('@actual-app/api');
 
 function printUsage() {
@@ -53,6 +57,8 @@ Options:
   --name <name>        Budget file name in Actual
                        (default: 'Budgetwise-Migration-Budget').
   --no-verify          Skip post-flight verification queries.
+  --fix                If budget drift is detected, write the expected values
+                       non-interactively (use with care — trusts the capture).
   --verbose            Debug-level logging.
   --help, -h           Show this help.
 
@@ -62,8 +68,13 @@ Notes:
   - Payee dedup runs on the capture: exact-name duplicates collapsed, then
     case-insensitive + apostrophe-normalized variants merged. Substring /
     edit-distance candidates are logged as warnings but NOT auto-merged.
+  - Budget row dedup runs on the capture: duplicate (timeframe, category_id)
+    rows collapse to the lowest-id row (matches Budgetwise UI's display).
   - The setBudgetAmount API silently no-ops inside runImport, so budget
     amounts are written in a separate post-import pass.
+  - After the budget pass, the tool re-reads Actual's budget cells and
+    compares them against the deduped capture. Drift triggers a TTY prompt
+    (fix / keep anyway / fail); in non-TTY environments it logs and exits 1.
 `);
 }
 
@@ -75,6 +86,7 @@ function parseArgs(argv) {
     else if (a === '--name') out.name = argv[++i];
     else if (a === '--keep-failed') out.keepFailed = true;
     else if (a === '--no-verify') out.noVerify = true;
+    else if (a === '--fix') out.fix = true;
     else if (a === '--verbose') out.verbose = true;
     else if (a === '--help' || a === '-h') out.help = true;
   }
@@ -150,7 +162,7 @@ async function main() {
   logger.info(`  budget entries:  ${budgetCount}`);
 
   if (!args.noVerify) {
-    await postflight(result);
+    await postflight(result, capture);
   } else {
     logger.warn('--no-verify set; skipping post-flight checks');
   }
@@ -168,41 +180,29 @@ function ensureDataDir() {
 }
 
 async function writeBudgetsAfterImport(capture, populateResult) {
-  const { unwrap } = await import('../lib/reader.js');
-  const tfc = unwrap(capture.timeframeCategories);
-  if (!Array.isArray(tfc) || tfc.length === 0) return 0;
-
-  const flat = tfc.flat();
   const categoryIdToActual = populateResult.categoryIdToActual;
-
   const actualCats = await api.getCategories();
   const actualCatIds = new Set(actualCats.map(c => c.id));
 
+  const entries = expectedBudgetEntries(capture, categoryIdToActual);
+
   let count = 0;
-  let ccSkipped = 0;
   let missing = 0;
   await api.batchBudgetUpdates(async () => {
-    for (const entry of flat) {
-      if (entry.is_cc) { ccSkipped++; continue; }
-      if (!entry.category_id) { missing++; continue; }
-      const catId = categoryIdToActual.get(entry.category_id);
-      if (!catId || !actualCatIds.has(catId)) { missing++; continue; }
-      const tf = entry.timeframe;
-      if (!tf || tf.length !== 6) continue;
-      const mm = tf.slice(0, 2);
-      const yyyy = tf.slice(2, 6);
-      const month = `${yyyy}-${mm}-01`;
-      const cents = Math.round(parseFloat(entry.budgeted || '0') * 100);
-      await api.setBudgetAmount(month, catId, cents);
+    for (const e of entries) {
+      if (!actualCatIds.has(e.catId)) { missing++; continue; }
+      await api.setBudgetAmount(e.month, e.catId, e.cents);
       count++;
     }
   });
-  logger.info(`  Wrote ${count} budget entries (${ccSkipped} CC rows skipped, ${missing} missing categories/budgets)`);
+  logger.info(`  Wrote ${count} budget entries (${missing} missing categories/budgets skipped)`);
   return count;
 }
 
-async function postflight(expected) {
+async function postflight(expected, capture) {
   logger.section('Post-flight verification');
+
+  // Light checks (counts)
   const accounts = await api.getAccounts();
   const categories = await api.getCategories();
   const groups = await api.getCategoryGroups();
@@ -229,22 +229,79 @@ async function postflight(expected) {
   logger.info(`  total transactions: ${totalTxs}`);
   logger.info(`  uncategorized: ${uncategorized} (transactions with no category in source)`);
 
-  if (expected.budgetEntries > 0) {
-    const months = await api.getBudgetMonths();
-    if (months.length > 0) {
-      const month = Array.isArray(months) ? months[months.length - 1] : months;
-      const monthStr = typeof month === 'string' ? month : month.month;
-      const bm = await api.getBudgetMonth(monthStr);
-      const cats = (bm.categoryGroups || []).flatMap(g => g.categories);
-      const withBudget = cats.filter(c => c.budgeted && c.budgeted !== 0);
-      const totalBudgeted = cats.reduce((s, c) => s + (c.budgeted || 0), 0);
-      logger.info(`  latest budget month (${bm.month}): ${withBudget.length}/${cats.length} categories with budget, total = $${(totalBudgeted/100).toFixed(2)}`);
-    }
-  }
-
   if (bad > 0) {
     logger.warn(`Post-flight had ${bad} failures; budget was imported but may need review.`);
   }
+
+  // Per-cell budget validation (the new step)
+  if (capture.timeframeCategories && expected.budgetEntries > 0) {
+    await validateBudgetsOrExit(capture, expected);
+  }
+}
+
+async function validateBudgetsOrExit(capture, populateResult) {
+  const entries = expectedBudgetEntries(capture, populateResult.categoryIdToActual);
+  const actualCats = await api.getCategories();
+  const actualCatById = new Map(actualCats.map(c => [c.id, c]));
+
+  logger.section('Budget verification');
+  const { checked, drift } = await validateBudgets(entries, {
+    // Actual's getBudgetMonth expects 'YYYY-MM', not 'YYYY-MM-DD'.
+    getMonth: (m) => api.getBudgetMonth(m.slice(0, 7)),
+  });
+  logger.info(`  checked: ${checked} (month, category) cells`);
+  if (drift.length === 0) {
+    logger.info(`  ✓ all cells match Budgetwise capture`);
+    return;
+  }
+
+  logger.warn(`  ✗ ${drift.length} cell(s) drift from Budgetwise capture`);
+  for (const d of drift.slice(0, 50)) {
+    const name = actualCatById.get(d.catId)?.name ?? '?';
+    logger.warn(`    ${formatDriftCell(d, { catName: name })}`);
+  }
+  if (drift.length > 50) logger.warn(`    ... and ${drift.length - 50} more`);
+
+  // Decide: --fix / interactive prompt / exit 1
+  if (args.fix) {
+    logger.info('  --fix set; rewriting drifted cells...');
+    await api.batchBudgetUpdates(async () => {
+      await fixDrift(drift, { setBudget: api.setBudgetAmount });
+    });
+    logger.info('  ✓ fix applied');
+    return;
+  }
+
+  const isTTY = process.stdin.isTTY && process.stdout.isTTY;
+  if (!isTTY) {
+    logger.error('Drift detected and no --fix flag; non-interactive mode → exiting 1.');
+    logger.error('Re-run with --fix to rewrite the cells, or delete the budget file in Actual UI and re-run.');
+    process.exit(1);
+  }
+
+  const choice = await prompt('Drift detected. (f)ix, (k)eep anyway, (F)ail? ');
+  if (choice === 'f' || choice === 'fix') {
+    logger.info('  rewriting drifted cells...');
+    await api.batchBudgetUpdates(async () => {
+      await fixDrift(drift, { setBudget: api.setBudgetAmount });
+    });
+    logger.info('  ✓ fix applied');
+  } else if (choice === 'F' || choice === 'fail') {
+    logger.error('User chose fail; exiting 1.');
+    process.exit(1);
+  } else {
+    logger.warn('User chose keep anyway; drift will persist.');
+  }
+}
+
+function prompt(question) {
+  return new Promise((resolve) => {
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    rl.question(question, (answer) => {
+      rl.close();
+      resolve(answer.trim().toLowerCase());
+    });
+  });
 }
 
 main().catch((e) => {
