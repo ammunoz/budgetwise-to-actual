@@ -114,13 +114,20 @@ test('dedup: respects first-seen order on usage tie', async () => {
 });
 
 // =========================================================================
-// Budget row dedup (dedupTimeframeCategories)
+// Budget row consolidation (dedupTimeframeCategories)
 // =========================================================================
 // Budgetwise's `/timeframe_categories` endpoint returns one row per save —
 // re-saving an unchanged budget creates a new row with the same category,
-// month, and a fresh id. The import must collapse duplicates so that the
-// trailing $0 echo rows don't overwrite the real budgeted value via
-// setBudgetAmount's last-write-wins behavior.
+// month, and a fresh id. The import must consolidate these rows so that
+// setBudgetAmount's last-write-wins behavior doesn't overwrite the real
+// budgeted value with whatever the last row happens to be (often a trailing
+// $0 echo, silently zeroing out budgets).
+//
+// The consolidation rule is SUM per (timeframe, category_id), with id-dedup
+// applied to CC rows first (the BW API may emit the same CC row twice in the
+// envelope with different `spent` values; the `budgeted` value is identical
+// and should count once). Verified via an oracle script that matches the
+// capture's ltbBreakdown.budgetedForMonth totals for 81/81 months.
 
 async function withTfc(name, timeframeCategories) {
   const dir = resolve(tmpdir(), `bw2a-test-tfc-${name}-${Date.now()}-${Math.random().toString(36).slice(2)}`);
@@ -150,8 +157,9 @@ test('tfc dedup: no duplicates — passthrough', async () => {
   assert.equal(out.length, 2);
 });
 
-test('tfc dedup: $X + $0 trailing — keeps $X', async () => {
+test('tfc dedup: $X + $0 trailing — sums to $X', async () => {
   // Real-world pattern: Budgetwise echoes the row with $0 when only `spent` changes.
+  // SUM of $X + $0 + $0 = $X (same as first-wins in this pattern).
   const out = await withTfc('echo', { data: [
     { id: 95194, timeframe: '042021', category_id: 'c1', budgeted: '10.00', spent: '-10.00', is_cc: false },
     { id: 96048, timeframe: '042021', category_id: 'c1', budgeted: '0.00',  spent: '-10.00', is_cc: false },
@@ -162,21 +170,24 @@ test('tfc dedup: $X + $0 trailing — keeps $X', async () => {
   assert.equal(out[0].budgeted, '10.00');
 });
 
-test('tfc dedup: $230 + $150 — keeps lowest-id row ($230)', async () => {
-  // The distinguishing case: two non-zero values. Budgetwise's UI shows the
-  // lower-id (older) row, so the import must do the same.
+test('tfc dedup: $230 + $150 — sums to $380', async () => {
+  // The distinguishing case for the SUM rule. Real-world: Category X 122021.
+  // First-wins ($230) and last-wins ($150) would both drop real money;
+  // SUM captures the full $380 that Budgetwise's ltbBreakdown expects.
   const out = await withTfc('edit', { data: [
-    { id: 101142, timeframe: '122021', category_id: 'dog', budgeted: '230.00', spent: '-115.75', is_cc: false },
-    { id: 101143, timeframe: '122021', category_id: 'dog', budgeted: '150.00', spent: '-115.75', is_cc: false },
+    { id: 101142, timeframe: '122021', category_id: 'cat-a', budgeted: '230.00', spent: '-115.75', is_cc: false },
+    { id: 101143, timeframe: '122021', category_id: 'cat-a', budgeted: '150.00', spent: '-115.75', is_cc: false },
   ] });
   assert.equal(out.length, 1);
+  // First-seen metadata wins; budgeted is the sum.
   assert.equal(out[0].id, 101142);
-  assert.equal(out[0].budgeted, '230.00');
+  assert.equal(out[0].budgeted, '380.00');
+  assert.equal(out[0].spent, '-115.75');
 });
 
-test('tfc dedup: is_cc rows preserved with cc_account_id key', async () => {
-  // CC rows have category_id === null; key on cc_account_id to dedup them
-  // too (same echo pattern can hit CC entries).
+test('tfc dedup: is_cc rows summed with cc_account_id key', async () => {
+  // CC rows have category_id === null; key on cc_account_id to consolidate them.
+  // SUM of $500 + $0 = $500 for cc1; $300 for cc2.
   const out = await withTfc('cc', { data: [
     { id: 100, timeframe: '012021', cc_account_id: 'cc1', category_id: null, budgeted: '500.00', is_cc: true },
     { id: 101, timeframe: '012021', cc_account_id: 'cc1', category_id: null, budgeted: '0.00',   is_cc: true },
@@ -186,18 +197,33 @@ test('tfc dedup: is_cc rows preserved with cc_account_id key', async () => {
   const cc1 = out.find(e => e.cc_account_id === 'cc1');
   assert.equal(cc1.id, 100);
   assert.equal(cc1.budgeted, '500.00');
+  const cc2 = out.find(e => e.cc_account_id === 'cc2');
+  assert.equal(cc2.budgeted, '300.00');
 });
 
-test('tfc dedup: descending-order array still picks lowest id', async () => {
-  // API order is normally ascending by id, but if a future API change
-  // returns rows in reverse, the rule must still pick the lowest id.
-  const out = await withTfc('descending', { data: [
-    { id: 101143, timeframe: '122021', category_id: 'dog', budgeted: '150.00', spent: '-115.75', is_cc: false },
-    { id: 101142, timeframe: '122021', category_id: 'dog', budgeted: '230.00', spent: '-115.75', is_cc: false },
+test('tfc dedup: CC rows id-deduped before sum (envelope duplicates)', async () => {
+  // The BW API may emit the same CC row twice with different `spent` values
+  // (e.g., a "before spend" snapshot and an "after spend" snapshot). The
+  // `budgeted` value is identical and should count once. Without id-dedup,
+  // SUM would double-count these rows.
+  const out = await withTfc('cc-id-dedup', { data: [
+    { id: 100, timeframe: '012021', cc_account_id: 'cc1', category_id: null, budgeted: '500.00', spent: '0',      is_cc: true },
+    { id: 100, timeframe: '012021', cc_account_id: 'cc1', category_id: null, budgeted: '500.00', spent: '-500.00', is_cc: true },
   ] });
   assert.equal(out.length, 1);
-  assert.equal(out[0].id, 101142);
-  assert.equal(out[0].budgeted, '230.00');
+  assert.equal(out[0].budgeted, '500.00');
+});
+
+test('tfc dedup: SUM is order-invariant', async () => {
+  // SUM doesn't depend on row order, so reversed input gives the same result.
+  const out = await withTfc('order', { data: [
+    { id: 101143, timeframe: '122021', category_id: 'cat-a', budgeted: '150.00', spent: '-115.75', is_cc: false },
+    { id: 101142, timeframe: '122021', category_id: 'cat-a', budgeted: '230.00', spent: '-115.75', is_cc: false },
+  ] });
+  assert.equal(out.length, 1);
+  assert.equal(out[0].budgeted, '380.00');
+  // First-seen metadata still wins (id 101143 in this input order), but
+  // budgeted is invariant.
 });
 
 test('tfc dedup: nested group envelope ({data: [[...],[...]]}) flattens before dedup', async () => {

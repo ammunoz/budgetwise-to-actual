@@ -1,0 +1,12 @@
+{
+  "data": [
+    { "id": 1, "timeframe": "012021", "category_id": "cat-a", "budgeted": "100.00", "spent": "0",       "is_cc": false, "cc_account_id": null },
+    { "id": 2, "timeframe": "012021", "category_id": "cat-a", "budgeted": "50.00",  "spent": "0",       "is_cc": false, "cc_account_id": null },
+    { "id": 3, "timeframe": "012021", "category_id": "cat-a", "budgeted": "0.00",   "spent": "0",       "is_cc": false, "cc_account_id": null },
+
+    { "id": 4, "timeframe": "012021", "category_id": "cat-b", "budgeted": "200.00", "spent": "0",       "is_cc": false, "cc_account_id": null },
+
+    { "id": 5, "timeframe": "022021", "category_id": "cat-a", "budgeted": "75.00",  "spent": "0",       "is_cc": false, "cc_account_id": null },
+    { "id": 6, "timeframe": "022021", "category_id": "cat-a", "budgeted": "75.00",  "spent": "0",       "is_cc": false, "cc_account_id": null }
+  ]
+}

@@ -69,8 +69,12 @@ Notes:
   - Payee dedup runs on the capture: exact-name duplicates collapsed, then
     case-insensitive + apostrophe-normalized variants merged. Substring /
     edit-distance candidates are logged as warnings but NOT auto-merged.
-  - Budget row dedup runs on the capture: duplicate (timeframe, category_id)
-    rows collapse to the lowest-id row (matches Budgetwise UI's display).
+  - Budget row consolidation runs on the capture: duplicate (timeframe,
+    category_id) rows collapse to one row per key with `budgeted` set to
+    the SUM of all contributing rows (matches Budgetwise's own per-month
+    math in ltbBreakdown.budgetedForMonth). CC rows are id-deduped before
+    summing (the BW API may emit the same CC row twice with different
+    `spent` values; the `budgeted` value is identical and counts once).
   - The setBudgetAmount API silently no-ops inside runImport, so budget
     amounts are written in a separate post-import pass.
   - After the budget pass, the tool re-reads Actual's budget cells and
