@@ -24,61 +24,27 @@ that appear to be stale BW data — the chain itself is consistent.)
 - `test/normalize.test.js`: 6 new tests for `shiftISODateMonths`
   (same-year, year-rollover, zero/no-op, day-edge, non-string pass-through).
 
-### Investigation follow-up: why `toBudget` still diverges from `leftToBudget`
+### Residual gap
 
-Even after the SUM and ltb_next fixes, Actual's `toBudget[m]` and BW's
-`leftToBudget[m]` differ for some months. Discovered that the difference
-is NOT a data-layer or import bug — it's an Actual algorithm difference.
+After the SUM and ltb_next fixes, Actual's `toBudget` and BW's
+`leftToBudget` still differ for some months.
 
-**Actual's formula** (from `@actual-app/api` source, line 55290-55300):
+**Actual's formula** (from `@actual-app/api` source):
 ```
 to-budget[m] =
-    available-funds[m]      // = total-income[m] + to-budget[m-1]
-  + last-month-overspent[m] // = Σ min(0, leftover[cat][m-1])
-  + total-budgeted[m]       // negative cents (storage convention)
+    available-funds[m]
+  + last-month-overspent[m]   // per-category overspending carried forward
+  + total-budgeted[m]         // negative cents
   - buffered[m]
 ```
 
-**BW's formula** (from ltbBreakdown chain, 80/80 verified):
+**BW's formula** (from `ltbBreakdown` chain, 80/80 verified):
 ```
-leftToBudget[m] = incomeForMonth[m] + fwdFromLastMonth[m] - budgetedForMonth[m]
-                = income[m] + ltb[m-1] - budgeted[m]
+leftToBudget[m] = income[m] + ltb[m-1] - budgeted[m]
 ```
 
-The difference: Actual tracks `last-month-overspent` (per-category
-overspending). If a category has `budgeted=$0` but actual spending > 0
-in a month, Actual carries the negative leftover forward as overspent
-and subtracts it from next month's `toBudget`. BW does not.
-
-**Concrete example**: Rent category in MMYYYY had `budgeted=$0` but a
-`$500` actual outflow. Actual's `lastMonthOverspent[MMYYYY]` = -$500,
-which reduces `toBudget[MMYYYY]` by $500. BW's `leftToBudget[MMYYYY]`
-doesn't deduct this. The cumulative carryover of these overspent
-categories accumulates to the ~$8K residual gap at MMYYYY.
-
-This is **correct behavior in Actual** (the UI shows overspending so the
-user can re-budget). The discrepancy is fundamental: BW treats "Left to
-Budget" as a planning tool with no actual-spend awareness; Actual is a
-full accounting system. The only ways to match BW exactly would be:
-(a) drop the actual outflow transactions (bad — we want spending history),
-or (b) add a budgeted amount for every outflow category (impractical).
-The recommended interpretation is to accept the gap as Actual being
-"stricter" about overspending than BW.
-
-### Capture-side oracles (read-only diagnostics)
-
-Two scripts verify the import is data-layer correct without an Actual
-round-trip:
-
-- `scripts/oracle/prove-sum-rule.js` — proves the SUM consolidation
-  rule matches BW's own per-month LTB math (`ltbBreakdown.budgetedForMonth`)
-  for 81/81 months across the captured dataset.
-- `scripts/oracle/prove-income-rule.js` — confirms `ltb_next=true`
-  is the right income-attribution rule (BW internal identity holds
-  81/81, carryover chain holds 80/80 in chronological order).
-
-Re-run after any capture/data changes to verify the import is faithful
-to BW's math before committing.
+The difference: Actual tracks `last-month-overspent` that BW doesn't.
+This is fundamental, not a fixable import bug.
 
 ## 0.1.2 (2026-08)
 
@@ -86,7 +52,7 @@ to BW's math before committing.
 
 The v0.1.1 fix used "lowest-id-wins" to collapse duplicate
 `/timeframe_categories` rows, based on a single hand-checked UI
-observation (Dog 2021-12 → $230). An oracle cross-check against the
+observation. An oracle cross-check against the
 capture's own `ltbBreakdown.budgetedForMonth` field — Budgetwise's
 authoritative per-month total — revealed that the real rule is **SUM**
 across all rows per `(timeframe, category_id)`, not first-wins. For
@@ -127,15 +93,10 @@ Also fixes a crash on transfer outflow halves
 `buildActualTx`'s signature) — every v0.1.0 import with transfers
 errored at the first transfer outflow.
 
-Also fixes a crash on transfer outflow halves
-(`accountIdToActual` was referenced but not defined in
-`buildActualTx`'s signature) — every v0.1.0 import with transfers
-errored at the first transfer outflow.
-
 ### Unique budget-name resolution
 
-`--name SampleBudget` now picks the next free counter suffix if a file with
-that name already exists ('SampleBudget-2', 'SampleBudget-3', …), so re-running
+`--name <name>` now picks the next free counter suffix if a file with
+that name already exists ('<name>-2', '<name>-3', …), so re-running
 no longer silently leaves duplicate-name files on the server. To
 re-run with the exact same name, delete the prior file in Actual →
 Settings → Files first.
