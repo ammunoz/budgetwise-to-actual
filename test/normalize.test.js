@@ -2,7 +2,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { toCents, signAmount, toISODate, buildTransferSkipSet } from '../lib/normalize.js';
+import { toCents, signAmount, toISODate, shiftISODateMonths, effectiveDate, buildTransferSkipSet } from '../lib/normalize.js';
 
 test('toCents: positive string', () => {
   assert.equal(toCents('198.33'), 19833);
@@ -89,4 +89,121 @@ test('buildTransferSkipSet: handles no transfers', () => {
 
 test('buildTransferSkipSet: handles empty input', () => {
   assert.equal(buildTransferSkipSet([]).size, 0);
+});
+
+// =========================================================================
+// shiftISODateMonths — used by populate.js to honor Budgetwise's `ltb_next`
+// semantics (income attributed to next month).
+// =========================================================================
+test('shiftISODateMonths: +1 month within same year', () => {
+  assert.equal(shiftISODateMonths('2026-05-22'), '2026-06-22');
+});
+
+test('shiftISODateMonths: +1 month across year boundary (Dec → Jan)', () => {
+  assert.equal(shiftISODateMonths('2026-12-15'), '2027-01-15');
+});
+
+test('shiftISODateMonths: +1 month across year boundary (Jan → Feb, year rollover)', () => {
+  // After shifting Jan to Feb, year stays the same — but if shifting back
+  // (negative delta), Dec → Nov wraps the year.
+  assert.equal(shiftISODateMonths('2027-01-01', -1), '2026-12-01');
+});
+
+test('shiftISODateMonths: delta=0 is a no-op', () => {
+  assert.equal(shiftISODateMonths('2026-05-22', 0), '2026-05-22');
+});
+
+test('shiftISODateMonths: clamps day to last valid day of target month', () => {
+  // Without clamping, "2024-05-31" + 1 = "2024-06-31" (invalid). Actual
+  // accepts the invalid string but the transaction is silently dropped from
+  // every month's `sum-amount`, propagating a missing-income gap through
+  // the cumulative carryover chain. See CHANGELOG 0.1.4.
+  assert.equal(shiftISODateMonths('2024-05-31', 1), '2024-06-30');
+  assert.equal(shiftISODateMonths('2023-03-31', 1), '2023-04-30');
+  assert.equal(shiftISODateMonths('2022-03-31', 1), '2022-04-30');
+  assert.equal(shiftISODateMonths('2025-01-31', 1), '2025-02-28');
+});
+
+test('shiftISODateMonths: day=30 in 30-day months stays 30', () => {
+  // Apr/Jun/Sep/Nov have 30 days; May 30 + 1 should land on June 30 (not 31).
+  assert.equal(shiftISODateMonths('2024-05-30', 1), '2024-06-30');
+  assert.equal(shiftISODateMonths('2024-08-30', 1), '2024-09-30');
+});
+
+test('shiftISODateMonths: leap-year Feb 29 clamps correctly', () => {
+  // Jan 31 in a leap year + 1 = Feb 29 (not 28).
+  assert.equal(shiftISODateMonths('2024-01-31', 1), '2024-02-29');
+  // Jan 31 in a non-leap year + 1 = Feb 28.
+  assert.equal(shiftISODateMonths('2023-01-31', 1), '2023-02-28');
+  // Feb 29 + 12 months in next year (non-leap) = Feb 28.
+  assert.equal(shiftISODateMonths('2024-02-29', 12), '2025-02-28');
+});
+
+test('shiftISODateMonths: Dec 31 + 1 = Jan 31 (valid rollover, not clamped)', () => {
+  // Guards against over-clamping — Jan always has 31 days.
+  assert.equal(shiftISODateMonths('2024-12-31', 1), '2025-01-31');
+  assert.equal(shiftISODateMonths('2026-12-31', 1), '2027-01-31');
+});
+
+test('shiftISODateMonths: day=29 clamps to 28 in non-leap Feb', () => {
+  assert.equal(shiftISODateMonths('2023-01-29', 1), '2023-02-28');
+  assert.equal(shiftISODateMonths('2023-01-30', 1), '2023-02-28');
+});
+
+test('shiftISODateMonths: non-string passthrough', () => {
+  assert.equal(shiftISODateMonths(null), null);
+  assert.equal(shiftISODateMonths(123), 123);
+  assert.equal(shiftISODateMonths('not-a-date'), 'not-a-date');
+});
+
+// =========================================================================
+// effectiveDate — wraps shiftISODateMonths for tx budget attribution.
+// Used by populate.js to honor ltb_next semantics.
+// =========================================================================
+test('effectiveDate: ISO datetime string with ltb_next=true shifts by 1 month', () => {
+  assert.equal(effectiveDate('2026-05-22T19:00:00', true), '2026-06-22');
+  assert.equal(effectiveDate('2026-05-22T19:00:00', false), '2026-05-22');
+});
+
+test('effectiveDate: YYYY-MM-DD string input', () => {
+  assert.equal(effectiveDate('2026-05-22', true), '2026-06-22');
+  assert.equal(effectiveDate('2026-05-22', false), '2026-05-22');
+});
+
+test('effectiveDate: applies day-clamping when shifting past month-end', () => {
+  // The actual bug case: 2024-05-31 with ltb_next shifts to 2024-06-30 (clamped)
+  assert.equal(effectiveDate('2024-05-31T19:00:00', true), '2024-06-30');
+  assert.equal(effectiveDate('2025-01-31T20:00:00', true), '2025-02-28');
+});
+
+test('effectiveDate: hoisting logic — same effective date means "keep in split"', () => {
+  // Symmetric split: both children have same effective date as parent → kept
+  const parentDate = '2026-05-22T19:00:00';
+  const parentEff = effectiveDate(parentDate, false);
+  const child1Eff = effectiveDate('2026-05-22T19:00:00', false);
+  const child2Eff = effectiveDate('2026-05-22T19:00:00', false);
+  assert.equal(parentEff, child1Eff);
+  assert.equal(parentEff, child2Eff);
+});
+
+test('effectiveDate: hoisting logic — different ltb_next shifts effective date', () => {
+  // Asymmetric split: child with ltb_next=true shifts forward 1 month
+  // This is the real-world bug case (2021-04-01 split parent with one child
+  // having ltb_next=true → child effective 2021-05-01, parent effective
+  // 2021-04-01 → must be hoisted).
+  const parentDate = '2021-04-01T19:00:00';
+  const parentEff = effectiveDate(parentDate, false);
+  const childEff = effectiveDate(parentDate, true);
+  assert.notEqual(parentEff, childEff);
+  assert.equal(parentEff, '2021-04-01');
+  assert.equal(childEff, '2021-05-01');
+});
+
+test('effectiveDate: hoisting logic — raw date mismatch (no ltb_next)', () => {
+  // Even without ltb_next, a child with a different raw date from the parent
+  // has a different effective date → must be hoisted. (makeChild clobbers
+  // child dates, so we can't preserve this in a split.)
+  const parentEff = effectiveDate('2021-04-15T19:00:00', false);
+  const childEff = effectiveDate('2021-04-10T19:00:00', false);
+  assert.notEqual(parentEff, childEff);
 });

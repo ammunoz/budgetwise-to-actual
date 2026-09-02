@@ -29,6 +29,3 @@ dist/
 
 # Local-only documentation (not part of the public repo)
 LOCAL.md
-
-# Development utilities (Playwright, validation scripts — not part of public tool)
-scripts/
