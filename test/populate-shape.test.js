@@ -30,8 +30,8 @@ const apiStub = {
   createAccount: mock.fn(async ({ name }) => `acct-${name}`),
   // Phase C.5: transfers (called from importTransactions -> ensureTransferPayees)
   getAccounts: mock.fn(async () => [
-    { id: 'acct-Checking', name: 'Checking' },
-    { id: 'acct-Card A', name: 'Card A' },
+    { id: 'acct-checking', name: 'Checking' },
+    { id: 'acct-card-a', name: 'Card A' },
   ]),
   // Phase C.5: transfers
   getPayees: mock.fn(async () => []),
@@ -57,8 +57,8 @@ const { populate } = await import('../lib/populate.js');
 
 const sampleCapture = {
   accounts: { data: [
-    { id: 'bw-debit', name: 'Checking', offbudget: false, type: 'checking' },
-    { id: 'bw-visa', name: 'Card A', offbudget: false, type: 'creditcard' },
+    { id: 'bw-checking', name: 'Checking', offbudget: false, type: 'checking' },
+    { id: 'bw-card-a', name: 'Card A', offbudget: false, type: 'creditcard' },
   ] },
   categories: { data: [
     { id: 'bw-rent', name: 'Rent', section_id: 's1', is_income: false },
@@ -83,8 +83,8 @@ test('populate() return shape: accountIdToActual is a populated Map', async () =
   assert.ok(result.accountIdToActual instanceof Map, 'accountIdToActual must be a Map');
   assert.equal(result.accountIdToActual.size, 2);
   // Each BW account id must map to an Actual account id (any non-empty string).
-  assert.ok(result.accountIdToActual.has('bw-debit'));
-  assert.ok(result.accountIdToActual.has('bw-visa'));
+  assert.ok(result.accountIdToActual.has('bw-checking'));
+  assert.ok(result.accountIdToActual.has('bw-card-a'));
   for (const v of result.accountIdToActual.values()) {
     assert.ok(typeof v === 'string' && v.length > 0);
   }
