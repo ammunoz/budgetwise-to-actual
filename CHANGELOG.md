@@ -1,5 +1,64 @@
 # Changelog
 
+## Unreleased
+
+### Smoother post-import transition
+
+After a Budgetwise → Actual migration the user now gets two artifact files in the capture directory:
+
+- **`MIGRATION_REPORT.md`** — bundled: settings migration outcome, per-month LTB reconciliation (BW `ltbBreakdown` vs Actual `getBudgetMonth`), per-account balance comparison, credit-card payment mapping, first-actions checklist excerpt.
+- **`FIRST_ACTIONS.md`** — standalone checklist of manual follow-up tasks.
+
+#### Settings migration (programmatic + guide fallback)
+
+The post-import pass now attempts to push Budgetwise's per-budget preferences into Actual via the internal `preferences/save` handler (`api.lib.send`):
+
+| BW setting       | Actual pref       | Status |
+|------------------|-------------------|--------|
+| `date_format`    | `dateFormat`      | Whitelisted; `YY`→`yyyy` translated |
+| `first_day`      | `firstDayOfWeekIdx` | Stringified int |
+| `decimal`+`thousands` | `numberFormat` | Mapped to one of 5 known format enums |
+| `global_ltb`     | `budgetType`      | `false`→`envelope`, `true`→`tracking` |
+
+Anything that fails the API call or has no programmatic equivalent is surfaced in the report's Manual Settings Guide section with concrete UI paths.
+
+#### Reconciliation report
+
+For each month in `ltbBreakdown.json`, the report fetches Actual's `getBudgetMonth(m)` and compares `incomeForMonth`/`leftToBudget`/`fwdFromLastMonth`/`budgetedForMonth` against `totalIncome`/`toBudget`/`fromLastMonth`/`totalBudgeted`. Per-account balances from BW's `current_bal` are also compared against Actual's transaction-summed balances. ~1 second for the captured dataset (~80 months).
+
+#### Credit-card payment notes
+
+Budgetwise budgets CC payments explicitly; Actual tracks them automatically via each creditcard account's built-in **Payment** pseudo-category. The report explains this mapping and surfaces the BW "budgeted" values per (card, month) so users can spot-check Actual's computed "available to pay".
+
+#### First Actions checklist
+
+Generated from signals already detected during import: fuzzy payee candidates (re-uses `findFuzzyCandidates`), uncategorized transactions, non-Income categories with net-positive Actual balance (likely income mis-categorized in BW), settings that didn't migrate, and any budget-cell drift from the existing verification step.
+
+### Code changes
+
+- New modules (each with unit tests, 23 new tests total):
+  - `lib/settings-migrate.js` — BW prefs → Actual mappings; uses injected `send` function so tests don't reach into `api.lib`
+  - `lib/recon-report.js` — pure comparison logic; injected `getMonth` + `getBalance` for testability
+  - `lib/cc-notes.js` — CC payment migration notes
+  - `lib/first-actions.js` — checklist composition
+  - `lib/report-writer.js` — shared `writeArtifact`/`writeArtifactRequired` helper
+- `lib/reader.js`: `findFuzzyCandidates` is now a top-level export (no behavior change)
+- `bin/import_budgetwise.js`:
+  - Settings migration runs after `runImport` + budget pass (synced prefs are per-file scoped, not part of `runImport`'s transaction)
+  - Reports written between postflight and `validateBudgetsOrExit` so users always have a record even if the budget-drift check exits 1
+  - `--no-verify` still produces the lighter reports (uncategorized count, account balances) without the per-cell budget drift sweep
+
+### Bug fixes from review pass
+
+- **`populate()` now exposes `accountIdToActual`.** The first iteration didn't thread the BW→Actual account id map into its return value, so `runReconReport` always saw an empty map and marked every account as "no matching Actual account" in the per-account balance comparison. Fixed by adding `accountIdToActual` to the return object (`lib/populate.js`) and adding a regression test that uses Node's `--experimental-test-module-mocks` to stub `@actual-app/api` and verify the return shape.
+- **Drift count surfaces in the first-actions checklist.** `validateBudgetsOrExit` was split into `detectBudgetDrift` (read-only, runs before report writing) and `applyDriftDecision` (the fix/keep/fail/exit logic, runs after). Reports now include the drift cell count.
+- **Bundled report heading hierarchy is clean.** `composeMarkdown` strips the leading `# Title` from each section body so we don't end up with h1s nested under h2 sections. `settingsMigrationGuide` now returns body-only markdown (its h1 is implied by the containing section's `## heading`).
+
+### Other improvements
+
+- **`ccNotes` lists orphan CC ids.** If an `is_cc` row references an account id that isn't in `accounts.json`, the id is now surfaced in a "Unlisted accounts" section at the end of the CC report so the user can fix their capture.
+- **All-fail test for `applySyncedPrefs`.** If every `preferences/save` call rejects (e.g., `@actual-app/api` internal API changes), all mappings are recorded as failures and the guide fallback still surfaces.
+
 ## 0.1.3 (2026-08)
 
 ### Honor Budgetwise's `ltb_next` flag on income

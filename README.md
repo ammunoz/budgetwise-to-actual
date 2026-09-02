@@ -39,9 +39,18 @@ These won't be fixed in v0.1.0:
   yourself that you think of as income), they'll import as regular
   expense categories; flip them to `is_income: true` in Actual manually
   if needed.
-- **Settings (date format, currency symbol, etc.) aren't auto-imported.** Set these in your Actual user preferences.
+- **Settings (date format, currency symbol, etc.)** are partially auto-imported — see "Post-import reports" below. Currency symbol and per-budget currency settings still need to be configured by hand in Actual → Settings → Preferences.
 - **The Budgetwise API is unofficial.** We reverse-engineered it for personal use; behavior may change. See [docs/budgetwise-api.md](./docs/budgetwise-api.md) for what we documented.
 - **`bin/smoke.js` creates a real file on your Actual server.** It can't be auto-deleted. The file is named `__smoke-test-budget`.
+
+## Post-import reports
+
+After every run, two markdown files are written to the **capture directory** (the directory you passed via `--capture`):
+
+- **`MIGRATION_REPORT.md`** — bundled report with four sections: settings migration outcome, per-month LTB reconciliation (BW `ltbBreakdown` vs Actual's `getBudgetMonth`), credit-card payment mapping explanation, and a first-actions checklist excerpt.
+- **`FIRST_ACTIONS.md`** — standalone checklist of manual follow-up tasks (fuzzy payees to review, income candidates to flip, budget drift to fix, etc.).
+
+These files make it easy to verify the migration succeeded before treating the new budget as authoritative. The reconciliation report runs in about a second on the typical 80-month dataset.
 
 ## Quick start
 

@@ -37,7 +37,7 @@
     "smoke": "node bin/smoke.js",
     "export": "node bin/export_budgetwise.js",
     "import": "node bin/import_budgetwise.js",
-    "test": "node --test 'test/**/*.test.js'",
+    "test": "node --experimental-test-module-mocks --test 'test/**/*.test.js'",
     "lint": "eslint bin/ lib/ test/",
     "format": "prettier --write bin/ lib/ test/"
   },
